@@ -1,0 +1,1203 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>數獨｜桌機/手機雙優化＋錯誤警告＋完成偵測（手機禁止左右滑｜cell自動縮放）</title>
+
+  <style>
+    *{ box-sizing:border-box; }
+    html, body { height: 100%; }
+
+    :root{
+      --cell: 44px;              /* ✅ 會被 JS 在手機端自動調整 */
+      --thin: 1px;
+      --thick: 3px;
+      --line: #111;
+
+      --card: #fff;
+      --page: #f6f6f6;
+      --dash: #d2d2d2;
+
+      --radius: 14px;
+      --gap: 16px;
+
+      --sidebarW: 320px;
+      --mobileBarH: 330px;       /* ✅ 手機底部工具列高度（本版多一排按鈕） */
+      --safeBottom: env(safe-area-inset-bottom, 0px);
+    }
+
+    html.is-mobile{ }
+
+    body{
+      margin: 20px;
+      background: var(--page);
+      color: #111;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans TC", Arial, sans-serif;
+    }
+    html.is-mobile body{ margin: 14px; }
+
+    .wrap{
+      max-width: 1250px;
+      margin: 0 auto;
+      display: grid;
+      gap: var(--gap);
+    }
+
+    /* ✅ 手機有底部工具列：留白避免遮擋 */
+    html.is-mobile .wrap{
+      padding-bottom: calc(var(--mobileBarH) + var(--safeBottom) + 12px);
+    }
+
+    /* ===== 錯誤顯示條（JS 有錯你立刻看到） ===== */
+    .errbar{
+      display:none;
+      background: #ffecec;
+      border: 1px solid #ffb4b4;
+      color: #7a0010;
+      border-radius: 12px;
+      padding: 10px 12px;
+      font-size: 13px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+    }
+    .errbar.show{ display:block; }
+
+    .panel{
+      background: var(--card);
+      border: 1px solid #e6e6e6;
+      border-radius: var(--radius);
+      padding: 14px 16px;
+      display: grid;
+      gap: 10px;
+    }
+    .panel h1{ font-size: 18px; margin: 0; letter-spacing: .4px; }
+
+    .controls{
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+    }
+    label{
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+      color: #333;
+    }
+    input[type="number"]{
+      width: 90px;
+      padding: 8px 10px;
+      border: 1px solid #d9d9d9;
+      border-radius: 10px;
+      font-size: 14px;
+      outline: none;
+      background: #fff;
+    }
+    input[type="number"]:focus{ border-color:#999; }
+    input[type="number"]:disabled{
+      opacity: .55;
+      cursor: not-allowed;
+      background: #f5f5f5;
+    }
+    button{
+      padding: 9px 12px;
+      border: 1px solid #d9d9d9;
+      border-radius: 10px;
+      background: #fff;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    button:hover{ border-color:#999; }
+    button:disabled{ opacity:.5; cursor:not-allowed; }
+
+    .hint{
+      font-size: 12px;
+      color: #666;
+      line-height: 1.55;
+      margin: 0;
+    }
+
+    /* ✅ 手機：隱藏紅色區塊（上方設定 panel 全部隱藏） */
+    html.is-mobile .panel{
+      display: none !important;
+    }
+
+    /* ===== 主要布局：桌機兩欄；手機單欄（CSS fallback） ===== */
+    .layout{
+      display: grid;
+      grid-template-columns: 1fr var(--sidebarW);
+      gap: var(--gap);
+      align-items: start;
+    }
+
+    @media (max-width: 980px){
+      .layout{ grid-template-columns: 1fr; }
+      .sidebar{ display:none !important; }
+    }
+    @media (pointer: coarse){
+      @media (max-width: 1100px){
+        .layout{ grid-template-columns: 1fr; }
+        .sidebar{ display:none !important; }
+      }
+    }
+
+    /* 右側工具列（桌機） */
+    .sidebar{
+      position: sticky;
+      top: 16px;
+      align-self: start;
+      background: var(--card);
+      border: 1px solid #e6e6e6;
+      border-radius: var(--radius);
+      padding: 12px;
+      display: grid;
+      gap: 10px;
+      box-shadow: 0 2px 10px rgba(0,0,0,.04);
+    }
+
+    .side-title{
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 10px;
+    }
+    .side-title h3{ margin: 0; font-size: 14px; letter-spacing: .2px; }
+    .pill{
+      font-size: 12px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: #f1f1f1;
+      color: #444;
+      white-space: nowrap;
+    }
+    .side-status{
+      font-size: 12px;
+      color: #666;
+      line-height: 1.45;
+      min-height: 34px;
+      padding: 8px 10px;
+      border: 1px dashed var(--dash);
+      border-radius: 12px;
+      background: #fafafa;
+    }
+    .toggles{ display: flex; flex-wrap: wrap; gap: 8px; }
+    .toggle-on{ border-color: #111; font-weight: 800; }
+
+    .keypad{
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .keypad button{
+      padding: 12px 0;
+      border-radius: 12px;
+      font-weight: 900;
+      font-size: 15px;
+    }
+    .keypad .wide{ grid-column: span 2; }
+
+    .actions{
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .actions button{
+      padding: 10px 10px;
+      border-radius: 12px;
+      font-weight: 750;
+      font-size: 13px;
+    }
+
+    /* ===== 題目區 ===== */
+    .days{
+      display: grid;
+      gap: var(--gap);
+
+      --board: calc(44px * 9 + var(--thick) * 2);
+      --card-min: calc(var(--board) + 28px + 8px);
+
+      grid-template-columns: repeat(auto-fit, minmax(var(--card-min), 1fr));
+      align-items: start;
+    }
+    @media (max-width: 980px){
+      .days{ grid-template-columns: 1fr; }
+    }
+
+    .card{
+      background: var(--card);
+      border: 1px solid #e6e6e6;
+      border-radius: var(--radius);
+      padding: 14px 14px 12px;
+      box-shadow: 0 2px 10px rgba(0,0,0,.04);
+      overflow: visible;
+      display: grid;
+      gap: 10px;
+    }
+
+    .card.active{
+      border-color: #111;
+      box-shadow: 0 6px 16px rgba(0,0,0,.08);
+    }
+    .card.completed{
+      border-color: #1b5e20;
+      box-shadow: 0 6px 18px rgba(27,94,32,.22);
+    }
+    .card.completed h2::after{
+      content: " ✔ 完成";
+      color: #1b5e20;
+      font-weight: 900;
+      margin-left: 6px;
+    }
+
+    .card h2{
+      margin: 0;
+      font-size: 15px;
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 10px;
+    }
+    .badge{
+      font-size: 12px;
+      color: #444;
+      background: #f1f1f1;
+      padding: 2px 8px;
+      border-radius: 999px;
+      white-space: nowrap;
+    }
+    .divider{
+      margin-top: 6px;
+      border-top: 2px dashed var(--dash);
+      height: 0;
+      width: 100%;
+    }
+
+    /* ===== Sudoku（固定盤面寬） ===== */
+    .sudoku{
+      --boardW: calc(var(--cell) * 9 + var(--thick) * 2);
+
+      width: var(--boardW);
+      margin: 0 auto;
+
+      display: grid;
+      grid-template-columns: repeat(9, var(--cell));
+      grid-template-rows: repeat(9, var(--cell));
+
+      border: var(--thick) solid var(--line);
+      border-radius: 10px;
+
+      overflow: visible;
+      user-select: none;
+    }
+
+    .cell{
+      position: relative;
+      display: grid;
+      place-items: center;
+
+      width: var(--cell);
+      height: var(--cell);
+      min-width: var(--cell);
+      min-height: var(--cell);
+
+      border-right: var(--thin) solid var(--line);
+      border-bottom: var(--thin) solid var(--line);
+
+      font-size: 18px;
+      font-weight: 650;
+      background: #fff;
+      line-height: 1;
+      cursor: pointer;
+      outline: none;
+    }
+    .cell:focus{ outline: 2px solid #000; outline-offset: -2px; }
+
+    .cell.thick-r{ border-right: var(--thick) solid var(--line); }
+    .cell.thick-b{ border-bottom: var(--thick) solid var(--line); }
+    .cell.last-col{ border-right: 0; }
+    .cell.last-row{ border-bottom: 0; }
+
+    .cell.given{ cursor: default; }
+    .cell.selected{ background: #f3f3f3; }
+    .cell.user{ color: #0b57d0; font-weight: 780; }
+    .cell.wrong{ background: #ffecec; color: #b00020 !important; font-weight: 900; }
+    .cell.solved{ color: #146c43; font-weight: 900; }
+
+    .notes{
+      position: absolute;
+      inset: 3px;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      grid-template-rows: repeat(3, 1fr);
+      font-size: 10px;
+      font-weight: 700;
+      color: #777;
+      line-height: 1;
+      pointer-events: none;
+      text-align: center;
+      align-items: center;
+      justify-items: center;
+    }
+
+    /* ===== 手機底部工具列 ===== */
+    .mobilebar{ display:none; }
+
+    html.is-mobile .mobilebar{
+      display: grid;
+      position: fixed;
+      left: 12px;
+      right: 12px;
+      bottom: calc(12px + var(--safeBottom));
+      z-index: 999;
+      background: rgba(255,255,255,.96);
+      border: 1px solid #e2e2e2;
+      border-radius: 16px;
+      padding: 10px;
+      box-shadow: 0 12px 30px rgba(0,0,0,.14);
+      backdrop-filter: blur(6px);
+      gap: 10px;
+    }
+
+    .mobile-status{
+      font-size: 12px;
+      color: #666;
+      line-height: 1.35;
+      padding: 8px 10px;
+      border: 1px dashed var(--dash);
+      border-radius: 12px;
+      background: #fafafa;
+      min-height: 34px;
+    }
+
+    .mobile-row{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: center;
+    }
+    .mobile-row button{
+      padding: 10px 10px;
+      border-radius: 12px;
+      font-weight: 800;
+      font-size: 13px;
+      flex: 1 1 auto;
+    }
+
+    html.is-mobile .mobilebar .keypad{
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+    }
+    html.is-mobile .mobilebar .keypad button{
+      padding: 14px 0;
+      font-size: 16px;
+      border-radius: 14px;
+    }
+
+    /* ✅ 手機：禁止左右滑動（不使用 transform） */
+    html.is-mobile .card{
+      overflow-x: hidden;
+      overflow-y: visible;
+    }
+    html.is-mobile .board-wrap{
+      width: 100%;
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+    }
+    html.is-mobile .sudoku{
+      transform: none !important;
+    }
+
+    @media print{
+      body{ background: #fff; margin: 10mm; }
+      .hint{ display: none; }
+      .sidebar, .mobilebar, .panel{ display: none !important; }
+      .card{ box-shadow: none; }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <div id="errbar" class="errbar"></div>
+
+    <!-- ✅ 桌機設定（手機會隱藏） -->
+    <section class="panel">
+      <h1>數獨每日題目（桌機/手機雙優化＋完成偵測｜手機禁止左右滑｜cell 自動縮放）</h1>
+
+      <div class="controls">
+        <label>幾天（幾題）
+          <input id="days" type="number" min="1" max="60" value="30" />
+        </label>
+
+        <label>格子大小
+          <input id="cellSize" type="number" min="28" max="64" value="44" />
+        </label>
+
+        <button id="regen">重新產生</button>
+      </div>
+
+      <p class="hint">
+        操作：點空格 → 用右側（桌機）或底部（手機）數字面板輸入。<br/>
+        手機/平板固定「1 題模式」，桌機可多題多欄。錯誤警告可中途開關即時偵測；解完會完成偵測並鎖盤（可重置）。<br/>
+        ✅ 手機盤面會自動把格子縮到剛好塞進畫面：禁止左右滑，避免右側被切。
+      </p>
+    </section>
+
+    <section class="layout">
+      <section id="daysWrap" class="days"></section>
+
+      <!-- 桌機右側工具列 -->
+      <aside class="sidebar" aria-label="桌機工具列">
+        <div class="side-title">
+          <h3>工具列</h3>
+          <span id="activeLabel" class="pill">尚未選題</span>
+        </div>
+
+        <div id="sideStatus" class="side-status">先點任一題的空格開始。</div>
+
+
+
+        <div class="toggles">
+          <button id="btnNote" type="button">筆記：OFF</button>
+          <button id="btnWarn" type="button">錯誤警告：OFF</button>
+        </div>
+
+        <div class="keypad" aria-label="數字面板">
+          <button data-k="1">1</button><button data-k="2">2</button><button data-k="3">3</button><button data-k="4">4</button><button data-k="5">5</button>
+          <button data-k="6">6</button><button data-k="7">7</button><button data-k="8">8</button><button data-k="9">9</button>
+          <button class="wide" data-act="clear">清除</button>
+          <button class="wide" data-act="hint">提示 1 格</button>
+        </div>
+
+        <div class="actions">
+          <button data-act="solve">顯示答案</button>
+          <button data-act="reset">重置本題</button>
+        </div>
+      </aside>
+    </section>
+  </div>
+
+  <!-- ✅ 手機底部工具列（新增 重新產生 按鈕） -->
+  <section class="mobilebar" aria-label="手機工具列">
+    <div id="mobileStatus" class="mobile-status">先點空格開始。</div>
+
+    <div class="mobile-row">
+      <button id="mBtnNote" type="button">筆記：OFF</button>
+      <button id="mBtnWarn" type="button">錯誤警告：OFF</button>
+      <button id="mBtnClear" type="button">清除</button>
+    </div>
+
+    <!-- ✅ 藍色區塊：把重新產生功能搬到這裡 -->
+    <div class="mobile-row">
+      <button id="mBtnRegen" type="button">重新產生</button>
+      <button id="mBtnReset" type="button">重置本題</button>
+    </div>
+
+    <div class="keypad" aria-label="手機數字面板">
+      <button data-k="1">1</button><button data-k="2">2</button><button data-k="3">3</button><button data-k="4">4</button><button data-k="5">5</button><button data-k="6">6</button>
+      <button data-k="7">7</button><button data-k="8">8</button><button data-k="9">9</button>
+      <button class="wide" data-act="hint">提示 1 格</button>
+      <button class="wide" data-act="solve">顯示答案</button>
+    </div>
+  </section>
+
+  <script>
+    // ============ 錯誤顯示（頁面上直接看到） ============
+    const errbar = document.getElementById("errbar");
+    function showErr(msg){
+      errbar.classList.add("show");
+      errbar.textContent = msg;
+    }
+    window.addEventListener("error", (e) => {
+      showErr("⚠️ JS 錯誤：\n" + (e?.error?.stack || e.message || String(e)));
+    });
+    window.addEventListener("unhandledrejection", (e) => {
+      showErr("⚠️ Promise 錯誤：\n" + (e?.reason?.stack || String(e.reason)));
+    });
+
+    // ============ 手機判斷：UA + 觸控 + 螢幕 ============
+    function detectMobile(){
+      const ua = (navigator.userAgent || "").toLowerCase();
+      const uaHit = /iphone|ipod|ipad|android|mobile|tablet/.test(ua);
+      const coarse = window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
+      const small = window.matchMedia && window.matchMedia("(max-width: 1100px)").matches;
+      return uaHit || (coarse && small);
+    }
+
+    const MOBILE = detectMobile();
+    if (MOBILE) document.documentElement.classList.add("is-mobile");
+
+    // ============ DOM ============
+    const daysInput = document.getElementById("days");
+    const cellSizeInput = document.getElementById("cellSize");
+    const regenBtn = document.getElementById("regen");
+    const daysWrap = document.getElementById("daysWrap");
+
+    const activeLabel = document.getElementById("activeLabel");
+    const sideStatus = document.getElementById("sideStatus");
+    const btnNote = document.getElementById("btnNote");
+    const btnWarn = document.getElementById("btnWarn");
+
+    const mobileStatus = document.getElementById("mobileStatus");
+    const mBtnNote = document.getElementById("mBtnNote");
+    const mBtnWarn = document.getElementById("mBtnWarn");
+    const mBtnClear = document.getElementById("mBtnClear");
+    const mBtnRegen = document.getElementById("mBtnRegen");
+    const mBtnReset = document.getElementById("mBtnReset");
+
+    // ============ Sudoku 生成 ============
+    function makeSolvedGrid() {
+      const base = 3, side = 9;
+      const pattern = (r, c) => (base * (r % base) + Math.floor(r / base) + c) % side;
+
+      const shuffle = (arr) => {
+        const a = arr.slice();
+        for (let i = a.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [a[i], a[j]] = [a[j], a[i]];
+        }
+        return a;
+      };
+
+      const rBase = [0,1,2];
+      const rows  = shuffle(rBase).flatMap(g => shuffle(rBase).map(r => g*base + r));
+      const cols  = shuffle(rBase).flatMap(g => shuffle(rBase).map(c => g*base + c));
+      const nums  = shuffle([1,2,3,4,5,6,7,8,9]);
+
+      const grid = [];
+      for (let r = 0; r < side; r++) {
+        const row = [];
+        for (let c = 0; c < side; c++) row.push(nums[pattern(rows[r], cols[c])]);
+        grid.push(row);
+      }
+      return grid;
+    }
+
+    function makePuzzleFromSolved(solved, clues) {
+      const puzzle = solved.map(row => row.slice());
+      const cells = [];
+      for (let r=0;r<9;r++) for (let c=0;c<9;c++) cells.push([r,c]);
+
+      for (let i=cells.length-1;i>0;i--){
+        const j = Math.floor(Math.random()*(i+1));
+        [cells[i], cells[j]] = [cells[j], cells[i]];
+      }
+
+      const targetEmpties = 81 - clues;
+      let removed = 0;
+      for (const [r,c] of cells){
+        if (removed >= targetEmpties) break;
+        puzzle[r][c] = 0;
+        removed++;
+      }
+      return puzzle;
+    }
+
+    function cluesByDay(dayIndex, totalDays) {
+      const maxClues = 42, minClues = 24;
+      if (totalDays <= 1) return maxClues;
+      const t = dayIndex / (totalDays - 1);
+      const clues = Math.round(maxClues + (minClues - maxClues) * t);
+      return Math.max(minClues, Math.min(maxClues, clues));
+    }
+
+    function difficultyLabel(clues) {
+      if (clues >= 38) return "Easy";
+      if (clues >= 32) return "Easy→Medium";
+      if (clues >= 28) return "Medium";
+      return "Medium→Hard";
+    }
+
+    // ============ 解題器 ============
+    function cloneGrid(g){ return g.map(r => r.slice()); }
+
+    function isValid(grid, r, c, val){
+      for (let i=0;i<9;i++){
+        if (grid[r][i] === val) return false;
+        if (grid[i][c] === val) return false;
+      }
+      const br = Math.floor(r/3)*3, bc = Math.floor(c/3)*3;
+      for (let rr=br; rr<br+3; rr++){
+        for (let cc=bc; cc<bc+3; cc++){
+          if (grid[rr][cc] === val) return false;
+        }
+      }
+      return true;
+    }
+
+    function findEmpty(grid){
+      for (let r=0;r<9;r++) for (let c=0;c<9;c++) if (grid[r][c]===0) return [r,c];
+      return null;
+    }
+
+    function solveOne(grid){
+      const empty = findEmpty(grid);
+      if (!empty) return true;
+      const [r,c] = empty;
+
+      const nums = [1,2,3,4,5,6,7,8,9];
+      for (let i=nums.length-1;i>0;i--){
+        const j = Math.floor(Math.random()*(i+1));
+        [nums[i], nums[j]] = [nums[j], nums[i]];
+      }
+
+      for (const val of nums){
+        if (isValid(grid, r, c, val)){
+          grid[r][c] = val;
+          if (solveOne(grid)) return true;
+          grid[r][c] = 0;
+        }
+      }
+      return false;
+    }
+
+    // ============ 狀態 ============
+    const stateMap = new WeakMap();
+    const keyRC = (r,c) => `${r},${c}`;
+    let activeCard = null;
+
+    function setGlobalStatus(text){
+      sideStatus.textContent = text;
+      mobileStatus.textContent = text;
+    }
+    function setActiveLabel(text){ activeLabel.textContent = text; }
+
+    // ✅ 完成偵測（不依賴錯誤警告）
+    function checkCompletion(card){
+      const st = stateMap.get(card);
+      if (!st || st.solvedShown || st.completed) return;
+
+      for (let r=0;r<9;r++){
+        for (let c=0;c<9;c++){
+          if (st.current[r][c] === 0) return;
+        }
+      }
+      for (let r=0;r<9;r++){
+        for (let c=0;c<9;c++){
+          if (st.original[r][c] !== 0) continue;
+          if (st.current[r][c] !== st.solution[r][c]) return;
+        }
+      }
+
+      st.completed = true;
+      st.selected = null;
+      card.classList.add("completed");
+      setGlobalStatus("🎉 完成！本題已正確解出（已鎖盤，可重置）");
+      refreshAllCells(card);
+    }
+
+    function initState(card, puzzle, solution){
+      stateMap.set(card, {
+        original: cloneGrid(puzzle),
+        current: cloneGrid(puzzle),
+        solution: cloneGrid(solution),
+        solvedShown: false,
+        completed: false,
+        noteMode: false,
+        warnWrong: false,
+        selected: null,
+        notes: new Map()
+      });
+    }
+
+    function syncToggleButtons(){
+      if (!activeCard){
+        btnNote.classList.remove("toggle-on");
+        btnWarn.classList.remove("toggle-on");
+        btnNote.textContent = "筆記：OFF";
+        btnWarn.textContent = "錯誤警告：OFF";
+        mBtnNote.classList.remove("toggle-on");
+        mBtnWarn.classList.remove("toggle-on");
+        mBtnNote.textContent = "筆記：OFF";
+        mBtnWarn.textContent = "錯誤警告：OFF";
+        return;
+      }
+      const st = stateMap.get(activeCard);
+      btnNote.classList.toggle("toggle-on", st.noteMode);
+      btnWarn.classList.toggle("toggle-on", st.warnWrong);
+      btnNote.textContent = st.noteMode ? "筆記：ON" : "筆記：OFF";
+      btnWarn.textContent = st.warnWrong ? "錯誤警告：ON" : "錯誤警告：OFF";
+
+      mBtnNote.classList.toggle("toggle-on", st.noteMode);
+      mBtnWarn.classList.toggle("toggle-on", st.warnWrong);
+      mBtnNote.textContent = st.noteMode ? "筆記：ON" : "筆記：OFF";
+      mBtnWarn.textContent = st.warnWrong ? "錯誤警告：ON" : "錯誤警告：OFF";
+    }
+
+    // ============ 視覺渲染 ============
+    function renderNotes(cell, set){
+      const old = cell.querySelector(".notes");
+      if (old) old.remove();
+      if (!set || set.size === 0) return;
+
+      const notes = document.createElement("div");
+      notes.className = "notes";
+      for (let n=1;n<=9;n++){
+        const sp = document.createElement("span");
+        sp.textContent = set.has(n) ? String(n) : "";
+        notes.appendChild(sp);
+      }
+      cell.appendChild(notes);
+    }
+
+    function countWrong(card){
+      const st = stateMap.get(card);
+      let wrong = 0;
+      for (let r=0;r<9;r++){
+        for (let c=0;c<9;c++){
+          if (st.original[r][c] !== 0) continue;
+          const v = st.current[r][c];
+          if (v !== 0 && v !== st.solution[r][c]) wrong++;
+        }
+      }
+      return wrong;
+    }
+
+    function countEmpties(card){
+      const st = stateMap.get(card);
+      let n=0;
+      for (let r=0;r<9;r++) for (let c=0;c<9;c++) if (st.current[r][c]===0) n++;
+      return n;
+    }
+
+    function applyCellVisual(card, cell, r, c){
+      const st = stateMap.get(card);
+      const v = st.current[r][c];
+      const given = st.original[r][c] !== 0;
+
+      cell.classList.remove("selected","user","wrong","solved");
+      cell.textContent = "";
+
+      if (given){
+        cell.classList.add("given");
+        cell.textContent = String(st.original[r][c]);
+        renderNotes(cell, null);
+        return;
+      }
+
+      if (st.solvedShown){
+        cell.classList.add("solved");
+        cell.textContent = String(st.solution[r][c]);
+        renderNotes(cell, null);
+        return;
+      }
+
+      if (v === 0){
+        const nset = st.notes.get(keyRC(r,c));
+        renderNotes(cell, nset);
+      } else {
+        cell.classList.add("user");
+        cell.textContent = String(v);
+        renderNotes(cell, null);
+
+        if (st.warnWrong && v !== st.solution[r][c]){
+          cell.classList.add("wrong");
+        }
+      }
+    }
+
+    function refreshAllCells(card){
+      const cellEls = card.querySelectorAll(".cell");
+      for (const cell of cellEls){
+        const r = parseInt(cell.dataset.r,10);
+        const c = parseInt(cell.dataset.c,10);
+        applyCellVisual(card, cell, r, c);
+      }
+      const st = stateMap.get(card);
+      if (st.selected){
+        const sel = card.querySelector(`.cell[data-r="${st.selected.r}"][data-c="${st.selected.c}"]`);
+        if (sel) sel.classList.add("selected");
+      }
+    }
+
+    // ============ Active / 選格 ============
+    function setActiveCard(card){
+      if (activeCard === card) return;
+      document.querySelectorAll(".card.active").forEach(el => el.classList.remove("active"));
+      activeCard = card;
+      card.classList.add("active");
+
+      const day = card.dataset.day;
+      setActiveLabel(`Day ${day}`);
+      syncToggleButtons();
+
+      const st = stateMap.get(card);
+      if (st.completed) setGlobalStatus("🎉 本題已完成（已鎖盤，可重置或顯示答案）");
+      else if (st.solvedShown) setGlobalStatus("已顯示答案（按重置回到原題）");
+      else if (!st.selected) setGlobalStatus("已選擇題目。點一個空格開始。");
+      else setGlobalStatus(st.noteMode ? "筆記模式：點數字加入/取消候選" : "填答模式：點數字輸入");
+    }
+
+    function selectCell(card, r, c){
+      setActiveCard(card);
+
+      const st = stateMap.get(card);
+      if (st.completed){ setGlobalStatus("本題已完成（已鎖盤）。要再改請按「重置本題」。"); return; }
+      if (st.original[r][c] !== 0) return;
+      if (st.solvedShown) return;
+
+      st.selected = {r,c};
+      card.querySelectorAll(".cell.selected").forEach(el => el.classList.remove("selected"));
+      const cell = card.querySelector(`.cell[data-r="${r}"][data-c="${c}"]`);
+      if (cell) cell.classList.add("selected");
+      setGlobalStatus(st.noteMode ? "筆記模式：點數字加入/取消候選" : "填答模式：點數字輸入");
+    }
+
+    // ============ 工具列操作 ============
+    function requireActive(){
+      if (!activeCard){ setGlobalStatus("先點任一題的空格開始。"); return false; }
+      return true;
+    }
+
+    function inputNumber(n){
+      if (!requireActive()) return;
+      const card = activeCard;
+      const st = stateMap.get(card);
+
+      if (st.completed){ setGlobalStatus("本題已完成（已鎖盤）。要再改請按「重置本題」。"); return; }
+      if (!st.selected){ setGlobalStatus("先點選一個空格。"); return; }
+      if (st.solvedShown){ setGlobalStatus("已顯示答案（按重置回題目）。"); return; }
+
+      const {r,c} = st.selected;
+      if (st.original[r][c] !== 0) return;
+
+      if (st.noteMode){
+        const k = keyRC(r,c);
+        let set = st.notes.get(k);
+        if (!set){ set = new Set(); st.notes.set(k, set); }
+        if (set.has(n)) set.delete(n); else set.add(n);
+      } else {
+        st.current[r][c] = n;
+        st.notes.delete(keyRC(r,c));
+      }
+
+      refreshAllCells(card);
+
+      const wrong = countWrong(card);
+      const left = countEmpties(card);
+
+      if (st.noteMode){
+        setGlobalStatus("已更新候選（筆記模式）。");
+      } else if (st.warnWrong){
+        if (st.current[r][c] !== st.solution[r][c]) setGlobalStatus(`❌ 填錯（錯誤格數：${wrong}）`);
+        else setGlobalStatus(`✅ 正確！剩餘空格：${left}（錯誤格數：${wrong}）`);
+      } else {
+        setGlobalStatus(`已填入。剩餘空格：${left}`);
+      }
+
+      checkCompletion(card);
+    }
+
+    function clearSelected(){
+      if (!requireActive()) return;
+      const card = activeCard;
+      const st = stateMap.get(card);
+
+      if (st.completed){ setGlobalStatus("本題已完成（已鎖盤）。要再改請按「重置本題」。"); return; }
+      if (!st.selected){ setGlobalStatus("先點選一個空格。"); return; }
+      if (st.solvedShown){ setGlobalStatus("已顯示答案（按重置回題目）。"); return; }
+
+      const {r,c} = st.selected;
+      if (st.original[r][c] !== 0) return;
+
+      if (st.noteMode){
+        st.notes.delete(keyRC(r,c));
+      } else {
+        st.current[r][c] = 0;
+        st.notes.delete(keyRC(r,c));
+      }
+
+      refreshAllCells(card);
+      setGlobalStatus("已清除。");
+      checkCompletion(card);
+    }
+
+    function giveHint(){
+      if (!requireActive()) return;
+      const card = activeCard;
+      const st = stateMap.get(card);
+
+      if (st.completed){ setGlobalStatus("本題已完成（已鎖盤）。"); return; }
+      if (st.solvedShown){ setGlobalStatus("已顯示答案（按重置回題目）。"); return; }
+
+      let done = false;
+      for (let r=0;r<9 && !done;r++){
+        for (let c=0;c<9 && !done;c++){
+          if (st.original[r][c] === 0 && st.current[r][c] === 0){
+            st.current[r][c] = st.solution[r][c];
+            st.notes.delete(keyRC(r,c));
+            st.selected = {r,c};
+            done = true;
+          }
+        }
+      }
+
+      refreshAllCells(card);
+
+      if (!done){
+        setGlobalStatus("本題已填滿 ✅");
+        checkCompletion(card);
+        return;
+      }
+
+      const left = countEmpties(card);
+      const wrong = countWrong(card);
+      setGlobalStatus(st.warnWrong ? `提示 1 格 ✅ 剩餘空格：${left}（錯誤格數：${wrong}）` : `提示 1 格 ✅ 剩餘空格：${left}`);
+      checkCompletion(card);
+    }
+
+    function revealSolution(){
+      if (!requireActive()) return;
+      const card = activeCard;
+      const st = stateMap.get(card);
+
+      st.solvedShown = true;
+      st.selected = null;
+      st.completed = false;
+      card.classList.remove("completed");
+
+      refreshAllCells(card);
+      setGlobalStatus("已顯示答案 ✅（按重置可回到原題）");
+    }
+
+    function resetPuzzle(){
+      if (!requireActive()) return;
+      const card = activeCard;
+      const st = stateMap.get(card);
+
+      st.current = cloneGrid(st.original);
+      st.notes.clear();
+      st.solvedShown = false;
+      st.selected = null;
+
+      st.completed = false;
+      card.classList.remove("completed");
+
+      refreshAllCells(card);
+      setGlobalStatus("已重置為原題。");
+
+      fitBoardToScreen();
+    }
+
+    function toggleNote(){
+      if (!requireActive()) return;
+      const st = stateMap.get(activeCard);
+      st.noteMode = !st.noteMode;
+      syncToggleButtons();
+      setGlobalStatus(st.noteMode ? "筆記模式：點數字加入/取消候選" : "填答模式：點數字輸入");
+    }
+
+    function toggleWarn(){
+      if (!requireActive()) return;
+      const card = activeCard;
+      const st = stateMap.get(card);
+
+      st.warnWrong = !st.warnWrong;
+      syncToggleButtons();
+      refreshAllCells(card);
+
+      if (st.warnWrong){
+        const wrong = countWrong(card);
+        setGlobalStatus(wrong > 0 ? `已開啟錯誤警告：目前錯誤格數 ${wrong}` : "已開啟錯誤警告：目前沒有錯誤");
+      } else {
+        setGlobalStatus("已關閉錯誤警告（不再標紅）。");
+      }
+
+      checkCompletion(card);
+    }
+
+    // ✅ 手機盤面自動「調整 --cell」塞進螢幕
+    function fitBoardToScreen(){
+      if (!MOBILE) return;
+
+      const card = document.querySelector(".card");
+      if (!card) return;
+
+      // 手機上沒有紅色設定區，但 input 仍存在（只是 display:none）
+      const userCell = Math.max(28, Math.min(64, parseInt(cellSizeInput.value || "44", 10)));
+
+      const cs = getComputedStyle(card);
+      const padL = parseFloat(cs.paddingLeft) || 0;
+      const padR = parseFloat(cs.paddingRight) || 0;
+      const avail = card.clientWidth - padL - padR;
+
+      const root = getComputedStyle(document.documentElement);
+      const thick = parseFloat(root.getPropertyValue("--thick")) || 3;
+
+      const usableForCells = Math.max(0, avail - thick * 2);
+      const fitCell = Math.floor(usableForCells / 9);
+
+      const finalCell = Math.max(28, Math.min(userCell, fitCell));
+      document.documentElement.style.setProperty("--cell", `${finalCell}px`);
+    }
+
+    // ============ 渲染一題 ============
+    function renderPuzzleCard(dayNumber, puzzle, solution, clues) {
+      const card = document.createElement("article");
+      card.className = "card";
+      card.dataset.day = String(dayNumber);
+
+      initState(card, puzzle, solution);
+
+      const h2 = document.createElement("h2");
+      h2.innerHTML = `Day ${dayNumber} <span class="badge">${difficultyLabel(clues)} · clues ${clues}</span>`;
+      card.appendChild(h2);
+
+      const gridEl = document.createElement("div");
+      gridEl.className = "sudoku";
+      gridEl.setAttribute("aria-label", `Sudoku Day ${dayNumber}`);
+
+      for (let r=0;r<9;r++){
+        for (let c=0;c<9;c++){
+          const cell = document.createElement("div");
+          cell.className = "cell";
+          cell.tabIndex = 0;
+          cell.dataset.r = String(r);
+          cell.dataset.c = String(c);
+
+          if (c === 2 || c === 5) cell.classList.add("thick-r");
+          if (r === 2 || r === 5) cell.classList.add("thick-b");
+          if (c === 8) cell.classList.add("last-col");
+          if (r === 8) cell.classList.add("last-row");
+
+          cell.addEventListener("click", () => selectCell(card, r, c));
+          cell.addEventListener("keydown", (e) => {
+            if (e.key === "Enter" || e.key === " ") selectCell(card, r, c);
+          });
+
+          gridEl.appendChild(cell);
+        }
+      }
+
+      const wrap = document.createElement("div");
+      wrap.className = "board-wrap";
+      wrap.appendChild(gridEl);
+      card.appendChild(wrap);
+
+      const divider = document.createElement("div");
+      divider.className = "divider";
+      card.appendChild(divider);
+
+      refreshAllCells(card);
+
+      card.addEventListener("click", () => setActiveCard(card));
+      return card;
+    }
+
+    // ============ 產生全部 ============
+    function generateAll() {
+      const totalDays = MOBILE
+        ? 1
+        : Math.max(1, Math.min(60, parseInt(daysInput.value || "30", 10)));
+
+      const cellSize = Math.max(28, Math.min(64, parseInt(cellSizeInput.value || "44", 10)));
+      document.documentElement.style.setProperty("--cell", `${cellSize}px`);
+
+      daysWrap.innerHTML = "";
+      activeCard = null;
+      setActiveLabel("尚未選題");
+      setGlobalStatus("先點任一題的空格開始。");
+      syncToggleButtons();
+
+      for (let i = 0; i < totalDays; i++) {
+        const clues = cluesByDay(i, totalDays);
+
+        const solved = makeSolvedGrid();
+        const puzzle = makePuzzleFromSolved(solved, clues);
+
+        const toSolve = cloneGrid(puzzle);
+        const ok = solveOne(toSolve);
+        const solution = ok ? toSolve : solved;
+
+        daysWrap.appendChild(renderPuzzleCard(i + 1, puzzle, solution, clues));
+      }
+
+      if (MOBILE){
+        daysInput.value = 1;
+        daysInput.disabled = true;
+      } else {
+        daysInput.disabled = false;
+      }
+
+      fitBoardToScreen();
+      requestAnimationFrame(() => fitBoardToScreen());
+    }
+
+    // ============ 綁事件 ============
+    function safeBind(fn){
+      try { fn(); } catch (e) { showErr("⚠️ 初始化綁定失敗：\n" + (e?.stack || String(e))); }
+    }
+
+    safeBind(() => {
+      // 桌機
+      btnNote.addEventListener("click", toggleNote);
+      btnWarn.addEventListener("click", toggleWarn);
+
+      const sideKeypad = document.querySelector(".sidebar .keypad");
+      const sideActions = document.querySelector(".sidebar .actions");
+      if (sideKeypad){
+        sideKeypad.addEventListener("click", (e) => {
+          const b = e.target.closest("button");
+          if (!b) return;
+          const k = b.getAttribute("data-k");
+          const act = b.getAttribute("data-act");
+          if (k) inputNumber(parseInt(k, 10));
+          if (act === "clear") clearSelected();
+          if (act === "hint") giveHint();
+        });
+      }
+      if (sideActions){
+        sideActions.addEventListener("click", (e) => {
+          const b = e.target.closest("button");
+          if (!b) return;
+          const act = b.getAttribute("data-act");
+          if (act === "solve") revealSolution();
+          if (act === "reset") resetPuzzle();
+        });
+      }
+
+      // 手機
+      mBtnNote.addEventListener("click", toggleNote);
+      mBtnWarn.addEventListener("click", toggleWarn);
+      mBtnClear.addEventListener("click", clearSelected);
+
+      // ✅ 藍色區塊：重新產生
+      mBtnRegen.addEventListener("click", () => {
+        generateAll();
+        setGlobalStatus("已重新產生新題目 ✅");
+      });
+
+      // ✅ 藍色區塊：重置本題
+      mBtnReset.addEventListener("click", resetPuzzle);
+
+      const mobKeypad = document.querySelector(".mobilebar .keypad");
+      if (mobKeypad){
+        mobKeypad.addEventListener("click", (e) => {
+          const b = e.target.closest("button");
+          if (!b) return;
+          const k = b.getAttribute("data-k");
+          const act = b.getAttribute("data-act");
+          if (k) inputNumber(parseInt(k, 10));
+          if (act === "hint") giveHint();
+          if (act === "solve") revealSolution();
+        });
+      }
+
+      // 桌機上方重新產生仍保留
+      regenBtn.addEventListener("click", generateAll);
+      daysInput.addEventListener("change", generateAll);
+      cellSizeInput.addEventListener("change", generateAll);
+
+      window.addEventListener("resize", () => {
+        fitBoardToScreen();
+        requestAnimationFrame(() => fitBoardToScreen());
+      });
+    });
+
+    // 初次載入
+    try { generateAll(); } catch (e) { showErr("⚠️ 產生題目失敗：\n" + (e?.stack || String(e))); }
+  </script>
+</body>
+</html>
